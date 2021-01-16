@@ -12,10 +12,10 @@ public class Program : MyGridProgram  {
 
 public void Main(string argument)
 {
-    var pistonGroup = GridTerminalSystem.GetBlockGroupWithName("ExtractorSorters");
+    var pistonGroup = GridTerminalSystem.GetBlockGroupWithName(argument);
     if (pistonGroup == null)
     {
-        Echo("ERROR: Group 'ExtractorSorters' does not exist");
+        Echo($"ERROR: Group '{argument}' does not exist");
         return;
     }
 
@@ -23,13 +23,14 @@ public void Main(string argument)
     pistonGroup.GetBlocksOfType(sorters);
     if (sorters.Count == 0)
     {
-        Echo("ERROR: Group 'ExtractorSorters' has no sorters in it");
+        Echo($"ERROR: Group '{argument}' has no sorters in it");
         return;
     }
 
     var filterList = new List<MyInventoryItemFilter>
     {
-        new MyInventoryItemFilter("MyObjectBuilder_Ore/Stone", false)
+        new MyInventoryItemFilter("MyObjectBuilder_Ore/Stone", false),
+        new MyInventoryItemFilter("MyObjectBuilder_Ore/Ice", false),
     };
 
     foreach (var s in sorters)
@@ -37,6 +38,8 @@ public void Main(string argument)
         s.DrainAll = true;
         s.SetFilter(MyConveyorSorterMode.Whitelist, filterList);
     }
+
+    Echo($"Configured {sorters.Count} sorters");
 }
 
 // @formatter:off
