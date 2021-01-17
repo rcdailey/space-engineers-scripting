@@ -8,7 +8,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Runtime.CompilerServices;
 using Sandbox.ModAPI.Ingame;
 
 namespace GridRenamer  {
@@ -27,11 +26,9 @@ public class Program : MyGridProgram  {
         _fsm = new StateMachine(this, _logger, UpdateFrequency.Update1);
         _renamer = new RenamerLogic(this, _logger);
 
-        _fsm.OnEndState += _renamer.RefreshBlockList;
-
+        _fsm.OnEndState += _renamer.ActionEnded;
         _fsm.RegisterState("rename", () => _renamer.ActionRename(_args));
-
-        _renamer.RefreshBlockList(true);
+        _logger.Log("Ready to work");
     }
 
     public void Main(string argument)
@@ -39,30 +36,26 @@ public class Program : MyGridProgram  {
         string action = null;
         if (argument.Length > 0)
         {
-            var args = argument.Split(',').Select(s => s.ToLowerInvariant()).ToArray();
-            if (args[0] == "stop")
+            var args = argument.Split(',');
+            action = args[0].ToLowerInvariant();
+
+            if (action == "stop")
             {
                 _fsm.Interrupt();
-                _logger.Log("Renamer was interrupted");
+                _logger.Log("Interrupted");
                 return;
             }
 
-            action = args[0];
-            _args = args.Skip(1).ToList();
+            if (!_fsm.IsBusy)
+            {
+                _args = args.Skip(1).ToList();
+                _renamer.RefreshBlockList();
+            }
         }
 
         try
         {
-            var processing = _fsm.Tick(action);
-            if (!processing)
-            {
-                return;
-            }
-
-            for (var i = 0; i < _renamer.Changelog.Count; ++i)
-            {
-                _logger.Log($"{i + 1}. {_renamer.Changelog[i]}");
-            }
+            _fsm.Tick(action);
         }
         catch (Exception e)
         {
@@ -107,33 +100,52 @@ public class Program : MyGridProgram  {
             }
         }
 
-        public IEnumerator<object> ActionRename(string[] args)
+        public IEnumerator<object> ActionRename(List<string> args)
         {
-            if (args.Length < 2)
+            if (args.Count < 2)
             {
                 _logger.Log("Rename requires at least 2 arguments");
                 _logger.Log("USAGE: rename,OLD NAME,NEW NAME");
                 throw new ArgumentException("Insufficient number of arguments");
             }
 
+            var searchName = args[0];
+            var newName = args[1];
+
             yield return IterateBlocks(block =>
             {
                 var blockName = block.CustomName;
-                if (!blockName.Contains(args[0]))
+                if (!blockName.Contains(searchName))
                 {
                     return;
                 }
 
-                Changelog.Add($"{blockName} => {args[1]}");
-                // var oldName = block.CustomName;
-                block.CustomName = args[1] + System.Text.RegularExpressions.Regex
+                var nameIndexSuffix = System.Text.RegularExpressions.Regex
                     .Match(blockName, @" \d+$", System.Text.RegularExpressions.RegexOptions.RightToLeft).Value;
+
+                // If the block name already has the new name (ignoring any potential index suffix),
+                // then we ignore this block (no work to do)
+                var lengthToCompare = Math.Max(newName.Length, blockName.Length - nameIndexSuffix.Length);
+                if (string.Compare(blockName, 0, newName, 0, lengthToCompare) == 0)
+                {
+                    return;
+                }
+
+                var newNameWithIndex = newName + nameIndexSuffix;
+
+                AddChangelog(blockName, newNameWithIndex);
+                block.CustomName = newNameWithIndex;
             });
 
             yield return 0;
         }
 
-        public void RefreshBlockList(bool succeeded)
+        private void AddChangelog(string oldName, string newName)
+        {
+            Changelog.Add($"{oldName} =>\n    {newName}");
+        }
+
+        public void RefreshBlockList()
         {
             _blocks.Clear();
             _program.GridTerminalSystem.GetBlocksOfType<IMyTerminalBlock>(_blocks,
@@ -145,10 +157,18 @@ public class Program : MyGridProgram  {
             Changelog.Clear();
 
             _logger.Clear();
+        }
 
+        public void ActionEnded(bool succeeded)
+        {
             if (succeeded)
             {
-                _logger.Log("Ready to work");
+                _logger.Log($"Total Renames: {Changelog.Count}\n");
+
+                for (var i = 0; i < Changelog.Count; ++i)
+                {
+                    _logger.Log($"{i + 1}. {Changelog[i]}");
+                }
             }
         }
     }
@@ -306,8 +326,7 @@ public class Program : MyGridProgram  {
 
             if (_callstack.Count == 0)
             {
-                Cleanup();
-                _logger.Log("Done");
+                Cleanup(true);
             }
         }
 
@@ -319,12 +338,12 @@ public class Program : MyGridProgram  {
                 top.Dispose();
             }
 
-            Cleanup();
+            Cleanup(false);
         }
 
-        private void Cleanup()
+        private void Cleanup(bool success)
         {
-            OnEndState?.Invoke(false);
+            OnEndState?.Invoke(success);
             Runtime.UpdateFrequency = UpdateFrequency.None;
         }
     }
